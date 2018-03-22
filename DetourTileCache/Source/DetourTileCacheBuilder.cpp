@@ -22,7 +22,10 @@
 #include "DetourAssert.h"
 #include "DetourTileCacheBuilder.h"
 #include <string.h>
+#include <limits>
+#include <cstdint>
 
+const auto RI_MAX = std::numeric_limits<RegionIdType>::max();
 
 template<class T> class dtFixedArray
 {
@@ -100,8 +103,8 @@ void dtFreeTileCachePolyMesh(dtTileCacheAlloc* alloc, dtTileCachePolyMesh* lmesh
 struct dtLayerSweepSpan
 {
 	unsigned short ns;	// number samples
-	unsigned char id;	// region id
-	unsigned char nei;	// neighbour id
+	RegionIdType id;	// region id
+	RegionIdType nei;	// neighbour id
 };
 
 static const int DT_LAYER_MAX_NEIS = 16;
@@ -109,9 +112,9 @@ static const int DT_LAYER_MAX_NEIS = 16;
 struct dtLayerMonotoneRegion
 {
 	int area;
-	unsigned char neis[DT_LAYER_MAX_NEIS];
+	RegionIdType neis[DT_LAYER_MAX_NEIS];
 	unsigned char nneis;
-	unsigned char regId;
+	RegionIdType regId;
 	unsigned char areaId;
 };
 
@@ -140,7 +143,7 @@ inline bool overlapRangeExl(const unsigned short amin, const unsigned short amax
 	return (amin >= bmax || amax <= bmin) ? false : true;
 }
 
-static void addUniqueLast(unsigned char* a, unsigned char& an, unsigned char v)
+static void addUniqueLast(RegionIdType* a, unsigned char& an, RegionIdType v)
 {
 	const int n = (int)an;
 	if (n > 0 && a[n-1] == v) return;
@@ -156,7 +159,7 @@ inline bool isConnected(const dtTileCacheLayer& layer,
 	return true;
 }
 
-static bool canMerge(unsigned char oldRegId, unsigned char newRegId, const dtLayerMonotoneRegion* regs, const int nregs)
+static bool canMerge(RegionIdType oldRegId, RegionIdType newRegId, const dtLayerMonotoneRegion* regs, const int nregs)
 {
 	int count = 0;
 	for (int i = 0; i < nregs; ++i)
@@ -183,7 +186,7 @@ dtStatus dtBuildTileCacheRegions(dtTileCacheAlloc* alloc,
 	const int w = (int)layer.header->width;
 	const int h = (int)layer.header->height;
 	
-	memset(layer.regs,0xff,sizeof(unsigned char)*w*h);
+	memset(layer.regs,RI_MAX,sizeof(RegionIdType)*w*h);
 	
 	const int nsweeps = w;
 	dtFixedArray<dtLayerSweepSpan> sweeps(alloc, nsweeps);
@@ -192,34 +195,35 @@ dtStatus dtBuildTileCacheRegions(dtTileCacheAlloc* alloc,
 	memset(sweeps,0,sizeof(dtLayerSweepSpan)*nsweeps);
 	
 	// Partition walkable area into monotone regions.
-	unsigned char prevCount[256];
-	unsigned char regId = 0;
+
+	RegionIdType prevCount[RI_MAX + 1];
+	RegionIdType regId = 0;
 	
 	for (int y = 0; y < h; ++y)
 	{
 		if (regId > 0)
-			memset(prevCount,0,sizeof(unsigned char)*regId);
-		unsigned char sweepId = 0;
+			memset(prevCount,0,sizeof(RegionIdType)*regId);
+		RegionIdType sweepId = 0;
 		
 		for (int x = 0; x < w; ++x)
 		{
 			const int idx = x + y*w;
 			if (layer.areas[idx] == DT_TILECACHE_NULL_AREA) continue;
 			
-			unsigned char sid = 0xff;
+			RegionIdType sid = RI_MAX;
 			
 			// -x
 			const int xidx = (x-1)+y*w;
 			if (x > 0 && isConnected(layer, idx, xidx, walkableClimb))
 			{
-				if (layer.regs[xidx] != 0xff)
+				if (layer.regs[xidx] != RI_MAX)
 					sid = layer.regs[xidx];
 			}
 			
-			if (sid == 0xff)
+			if (sid == RI_MAX)
 			{
 				sid = sweepId++;
-				sweeps[sid].nei = 0xff;
+				sweeps[sid].nei = RI_MAX;
 				sweeps[sid].ns = 0;
 			}
 			
@@ -227,8 +231,8 @@ dtStatus dtBuildTileCacheRegions(dtTileCacheAlloc* alloc,
 			const int yidx = x+(y-1)*w;
 			if (y > 0 && isConnected(layer, idx, yidx, walkableClimb))
 			{
-				const unsigned char nr = layer.regs[yidx];
-				if (nr != 0xff)
+				const auto nr = layer.regs[yidx];
+				if (nr != RI_MAX)
 				{
 					// Set neighbour when first valid neighbour is encoutered.
 					if (sweeps[sid].ns == 0)
@@ -244,7 +248,7 @@ dtStatus dtBuildTileCacheRegions(dtTileCacheAlloc* alloc,
 					{
 						// This is hit if there is nore than one neighbour.
 						// Invalidate the neighbour.
-						sweeps[sid].nei = 0xff;
+						sweeps[sid].nei = RI_MAX;
 					}
 				}
 			}
@@ -257,13 +261,13 @@ dtStatus dtBuildTileCacheRegions(dtTileCacheAlloc* alloc,
 		{
 			// If the neighbour is set and there is only one continuous connection to it,
 			// the sweep will be merged with the previous one, else new region is created.
-			if (sweeps[i].nei != 0xff && (unsigned short)prevCount[sweeps[i].nei] == sweeps[i].ns)
+			if (sweeps[i].nei != RI_MAX && (unsigned short)prevCount[sweeps[i].nei] == sweeps[i].ns)
 			{
 				sweeps[i].id = sweeps[i].nei;
 			}
 			else
 			{
-				if (regId == 255)
+				if (regId == RI_MAX)
 				{
 					// Region ID's overflow.
 					return DT_FAILURE | DT_BUFFER_TOO_SMALL;
@@ -276,7 +280,7 @@ dtStatus dtBuildTileCacheRegions(dtTileCacheAlloc* alloc,
 		for (int x = 0; x < w; ++x)
 		{
 			const int idx = x+y*w;
-			if (layer.regs[idx] != 0xff)
+			if (layer.regs[idx] != RI_MAX)
 				layer.regs[idx] = sweeps[layer.regs[idx]].id;
 		}
 	}
@@ -289,7 +293,7 @@ dtStatus dtBuildTileCacheRegions(dtTileCacheAlloc* alloc,
 
 	memset(regs, 0, sizeof(dtLayerMonotoneRegion)*nregs);
 	for (int i = 0; i < nregs; ++i)
-		regs[i].regId = 0xff;
+		regs[i].regId = RI_MAX;
 	
 	// Find region neighbours.
 	for (int y = 0; y < h; ++y)
@@ -297,8 +301,8 @@ dtStatus dtBuildTileCacheRegions(dtTileCacheAlloc* alloc,
 		for (int x = 0; x < w; ++x)
 		{
 			const int idx = x+y*w;
-			const unsigned char ri = layer.regs[idx];
-			if (ri == 0xff)
+			const auto ri = layer.regs[idx];
+			if (ri == RI_MAX)
 				continue;
 			
 			// Update area.
@@ -309,8 +313,8 @@ dtStatus dtBuildTileCacheRegions(dtTileCacheAlloc* alloc,
 			const int ymi = x+(y-1)*w;
 			if (y > 0 && isConnected(layer, idx, ymi, walkableClimb))
 			{
-				const unsigned char rai = layer.regs[ymi];
-				if (rai != 0xff && rai != ri)
+				const auto rai = layer.regs[ymi];
+				if (rai != RI_MAX && rai != ri)
 				{
 					addUniqueLast(regs[ri].neis, regs[ri].nneis, rai);
 					addUniqueLast(regs[rai].neis, regs[rai].nneis, ri);
@@ -320,7 +324,7 @@ dtStatus dtBuildTileCacheRegions(dtTileCacheAlloc* alloc,
 	}
 	
 	for (int i = 0; i < nregs; ++i)
-		regs[i].regId = (unsigned char)i;
+		regs[i].regId = (RegionIdType)i;
 	
 	for (int i = 0; i < nregs; ++i)
 	{
@@ -330,7 +334,7 @@ dtStatus dtBuildTileCacheRegions(dtTileCacheAlloc* alloc,
 		int mergea = 0;
 		for (int j = 0; j < (int)reg.nneis; ++j)
 		{
-			const unsigned char nei = reg.neis[j];
+			const auto nei = reg.neis[j];
 			dtLayerMonotoneRegion& regn = regs[nei];
 			if (reg.regId == regn.regId)
 				continue;
@@ -347,8 +351,8 @@ dtStatus dtBuildTileCacheRegions(dtTileCacheAlloc* alloc,
 		}
 		if (merge != -1)
 		{
-			const unsigned char oldId = reg.regId;
-			const unsigned char newId = regs[merge].regId;
+			const auto oldId = reg.regId;
+			const auto newId = regs[merge].regId;
 			for (int j = 0; j < nregs; ++j)
 				if (regs[j].regId == oldId)
 					regs[j].regId = newId;
@@ -373,7 +377,7 @@ dtStatus dtBuildTileCacheRegions(dtTileCacheAlloc* alloc,
 	
 	for (int i = 0; i < w*h; ++i)
 	{
-		if (layer.regs[i] != 0xff)
+		if (layer.regs[i] != RI_MAX)
 			layer.regs[i] = regs[layer.regs[i]].regId;
 	}
 	
@@ -423,7 +427,7 @@ static bool appendVertex(dtTempContour& cont, const int x, const int y, const in
 }
 
 
-static unsigned char getNeighbourReg(dtTileCacheLayer& layer,
+static RegionIdType getNeighbourReg(dtTileCacheLayer& layer,
 									 const int ax, const int ay, const int dir)
 {
 	const int w = (int)layer.header->width;
@@ -438,7 +442,7 @@ static unsigned char getNeighbourReg(dtTileCacheLayer& layer,
 		// No connection, return portal or hard edge.
 		if (portal & mask)
 			return 0xf8 + (unsigned char)dir;
-		return 0xff;
+		return RI_MAX;
 	}
 	
 	const int bx = ax + getDirOffsetX(dir);
@@ -462,7 +466,7 @@ static bool walkContour(dtTileCacheLayer& layer, int x, int y, dtTempContour& co
 	for (int i = 0; i < 4; ++i)
 	{
 		const int dir = (i+3)&3;
-		unsigned char rn = getNeighbourReg(layer, x, y, dir);
+		auto rn = getNeighbourReg(layer, x, y, dir);
 		if (rn != layer.regs[x+y*w])
 		{
 			startDir = dir;
@@ -478,7 +482,7 @@ static bool walkContour(dtTileCacheLayer& layer, int x, int y, dtTempContour& co
 	int iter = 0;
 	while (iter < maxIter)
 	{
-		unsigned char rn = getNeighbourReg(layer, x, y, dir);
+		auto rn = getNeighbourReg(layer, x, y, dir);
 		
 		int nx = x;
 		int ny = y;
@@ -694,7 +698,7 @@ static unsigned char getCornerHeight(dtTileCacheLayer& layer,
 	
 	unsigned char portal = 0xf;
 	unsigned char height = 0;
-	unsigned char preg = 0xff;
+	RegionIdType preg = RI_MAX;
 	bool allSameReg = true;
 	
 	for (int dz = -1; dz <= 0; ++dz)
@@ -711,7 +715,7 @@ static unsigned char getCornerHeight(dtTileCacheLayer& layer,
 				{
 					height = dtMax(height, (unsigned char)lh);
 					portal &= (layer.cons[idx] >> 4);
-					if (preg != 0xff && preg != layer.regs[idx])
+					if (preg != RI_MAX && preg != layer.regs[idx])
 						allSameReg = false;
 					preg = layer.regs[idx]; 
 					n++;
@@ -771,8 +775,8 @@ dtStatus dtBuildTileCacheContours(dtTileCacheAlloc* alloc,
 		for (int x = 0; x < w; ++x)
 		{
 			const int idx = x+y*w;
-			const unsigned char ri = layer.regs[idx];
-			if (ri == 0xff)
+			const auto ri = layer.regs[idx];
+			if (ri == RI_MAX)
 				continue;
 			
 			dtTileCacheContour& cont = lcset.conts[ri];
@@ -2176,7 +2180,7 @@ dtStatus dtDecompressTileCacheLayer(dtTileCacheAlloc* alloc, dtTileCacheCompress
 	const int layerSize = dtAlign4(sizeof(dtTileCacheLayer));
 	const int headerSize = dtAlign4(sizeof(dtTileCacheLayerHeader));
 	const int gridSize = (int)compressedHeader->width * (int)compressedHeader->height;
-	const int bufferSize = layerSize + headerSize + gridSize*4;
+	const int bufferSize = layerSize + headerSize + sizeof(unsigned char) * gridSize * 3 + sizeof(RegionIdType) * gridSize;
 	
 	unsigned char* buffer = (unsigned char*)alloc->alloc(bufferSize);
 	if (!buffer)
@@ -2204,7 +2208,7 @@ dtStatus dtDecompressTileCacheLayer(dtTileCacheAlloc* alloc, dtTileCacheCompress
 	layer->heights = grids;
 	layer->areas = grids + gridSize;
 	layer->cons = grids + gridSize*2;
-	layer->regs = grids + gridSize*3;
+	layer->regs = reinterpret_cast<RegionIdType*>(grids + gridSize*3);
 	
 	*layerOut = layer;
 	

@@ -22,6 +22,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdint.h>
+#include <limits>
 #include "Recast.h"
 #include "RecastAlloc.h"
 #include "RecastAssert.h"
@@ -80,8 +82,9 @@ inline bool overlapRange(const unsigned short amin, const unsigned short amax,
 struct rcLayerSweepSpan
 {
 	unsigned short ns;	// number samples
-	unsigned char id;	// region id
-	unsigned char nei;	// neighbour id
+	using RegionIdType = uint16_t;
+	RegionIdType id;	// region id
+	RegionIdType nei;	// neighbour id
 };
 
 /// @par
@@ -93,6 +96,8 @@ bool rcBuildHeightfieldLayers(rcContext* ctx, rcCompactHeightfield& chf,
 							  const int borderSize, const int walkableHeight,
 							  rcHeightfieldLayerSet& lset)
 {
+	const auto RI_MAX = std::numeric_limits<rcLayerSweepSpan::RegionIdType>::max();
+
 	rcAssert(ctx);
 	
 	rcScopedTimer timer(ctx, RC_TIMER_BUILD_LAYERS);
@@ -100,13 +105,13 @@ bool rcBuildHeightfieldLayers(rcContext* ctx, rcCompactHeightfield& chf,
 	const int w = chf.width;
 	const int h = chf.height;
 	
-	rcScopedDelete<unsigned char> srcReg((unsigned char*)rcAlloc(sizeof(unsigned char)*chf.spanCount, RC_ALLOC_TEMP));
+	rcScopedDelete<rcLayerSweepSpan::RegionIdType> srcReg((rcLayerSweepSpan::RegionIdType*)rcAlloc(sizeof(rcLayerSweepSpan::RegionIdType)*chf.spanCount, RC_ALLOC_TEMP));
 	if (!srcReg)
 	{
 		ctx->log(RC_LOG_ERROR, "rcBuildHeightfieldLayers: Out of memory 'srcReg' (%d).", chf.spanCount);
 		return false;
 	}
-	memset(srcReg,0xff,sizeof(unsigned char)*chf.spanCount);
+	memset(srcReg,RI_MAX,sizeof(rcLayerSweepSpan::RegionIdType)*chf.spanCount);
 	
 	const int nsweeps = chf.width;
 	rcScopedDelete<rcLayerSweepSpan> sweeps((rcLayerSweepSpan*)rcAlloc(sizeof(rcLayerSweepSpan)*nsweeps, RC_ALLOC_TEMP));
@@ -118,13 +123,13 @@ bool rcBuildHeightfieldLayers(rcContext* ctx, rcCompactHeightfield& chf,
 	
 	
 	// Partition walkable area into monotone regions.
-	int prevCount[256];
-	unsigned char regId = 0;
+	int prevCount[RI_MAX + 1];
+	rcLayerSweepSpan::RegionIdType regId = 0;
 
 	for (int y = borderSize; y < h-borderSize; ++y)
 	{
 		memset(prevCount,0,sizeof(int)*regId);
-		unsigned char sweepId = 0;
+		rcLayerSweepSpan::RegionIdType sweepId = 0;
 		
 		for (int x = borderSize; x < w-borderSize; ++x)
 		{
@@ -135,7 +140,7 @@ bool rcBuildHeightfieldLayers(rcContext* ctx, rcCompactHeightfield& chf,
 				const rcCompactSpan& s = chf.spans[i];
 				if (chf.areas[i] == RC_NULL_AREA) continue;
 
-				unsigned char sid = 0xff;
+				rcLayerSweepSpan::RegionIdType sid = RI_MAX;
 
 				// -x
 				if (rcGetCon(s, 0) != RC_NOT_CONNECTED)
@@ -143,14 +148,14 @@ bool rcBuildHeightfieldLayers(rcContext* ctx, rcCompactHeightfield& chf,
 					const int ax = x + rcGetDirOffsetX(0);
 					const int ay = y + rcGetDirOffsetY(0);
 					const int ai = (int)chf.cells[ax+ay*w].index + rcGetCon(s, 0);
-					if (chf.areas[ai] != RC_NULL_AREA && srcReg[ai] != 0xff)
+					if (chf.areas[ai] != RC_NULL_AREA && srcReg[ai] != RI_MAX)
 						sid = srcReg[ai];
 				}
 				
-				if (sid == 0xff)
+				if (sid == RI_MAX)
 				{
 					sid = sweepId++;
-					sweeps[sid].nei = 0xff;
+					sweeps[sid].nei = RI_MAX;
 					sweeps[sid].ns = 0;
 				}
 				
@@ -160,8 +165,8 @@ bool rcBuildHeightfieldLayers(rcContext* ctx, rcCompactHeightfield& chf,
 					const int ax = x + rcGetDirOffsetX(3);
 					const int ay = y + rcGetDirOffsetY(3);
 					const int ai = (int)chf.cells[ax+ay*w].index + rcGetCon(s, 3);
-					const unsigned char nr = srcReg[ai];
-					if (nr != 0xff)
+					const auto nr = srcReg[ai];
+					if (nr != RI_MAX)
 					{
 						// Set neighbour when first valid neighbour is encoutered.
 						if (sweeps[sid].ns == 0)
@@ -177,7 +182,7 @@ bool rcBuildHeightfieldLayers(rcContext* ctx, rcCompactHeightfield& chf,
 						{
 							// This is hit if there is nore than one neighbour.
 							// Invalidate the neighbour.
-							sweeps[sid].nei = 0xff;
+							sweeps[sid].nei = RI_MAX;
 						}
 					}
 				}
@@ -191,13 +196,13 @@ bool rcBuildHeightfieldLayers(rcContext* ctx, rcCompactHeightfield& chf,
 		{
 			// If the neighbour is set and there is only one continuous connection to it,
 			// the sweep will be merged with the previous one, else new region is created.
-			if (sweeps[i].nei != 0xff && prevCount[sweeps[i].nei] == (int)sweeps[i].ns)
+			if (sweeps[i].nei != RI_MAX && prevCount[sweeps[i].nei] == (int)sweeps[i].ns)
 			{
 				sweeps[i].id = sweeps[i].nei;
 			}
 			else
 			{
-				if (regId == 255)
+				if (regId == RI_MAX)
 				{
 					ctx->log(RC_LOG_ERROR, "rcBuildHeightfieldLayers: Region ID overflow.");
 					return false;
@@ -212,7 +217,7 @@ bool rcBuildHeightfieldLayers(rcContext* ctx, rcCompactHeightfield& chf,
 			const rcCompactCell& c = chf.cells[x+y*w];
 			for (int i = (int)c.index, ni = (int)(c.index+c.count); i < ni; ++i)
 			{
-				if (srcReg[i] != 0xff)
+				if (srcReg[i] != RI_MAX)
 					srcReg[i] = sweeps[srcReg[i]].id;
 			}
 		}
@@ -247,8 +252,8 @@ bool rcBuildHeightfieldLayers(rcContext* ctx, rcCompactHeightfield& chf,
 			for (int i = (int)c.index, ni = (int)(c.index+c.count); i < ni; ++i)
 			{
 				const rcCompactSpan& s = chf.spans[i];
-				const unsigned char ri = srcReg[i];
-				if (ri == 0xff) continue;
+				const auto ri = srcReg[i];
+				if (ri == RI_MAX) continue;
 				
 				regs[ri].ymin = rcMin(regs[ri].ymin, s.y);
 				regs[ri].ymax = rcMax(regs[ri].ymax, s.y);
@@ -265,8 +270,8 @@ bool rcBuildHeightfieldLayers(rcContext* ctx, rcCompactHeightfield& chf,
 						const int ax = x + rcGetDirOffsetX(dir);
 						const int ay = y + rcGetDirOffsetY(dir);
 						const int ai = (int)chf.cells[ax+ay*w].index + rcGetCon(s, dir);
-						const unsigned char rai = srcReg[ai];
-						if (rai != 0xff && rai != ri)
+						const auto rai = srcReg[ai];
+						if (rai != RI_MAX && rai != ri)
 						{
 							// Don't check return value -- if we cannot add the neighbor
 							// it will just cause a few more regions to be created, which
@@ -307,8 +312,10 @@ bool rcBuildHeightfieldLayers(rcContext* ctx, rcCompactHeightfield& chf,
 	static const int MAX_STACK = 64;
 	unsigned char stack[MAX_STACK];
 	int nstack = 0;
+
+	auto regs_to_p = nregs > 255 ? 255 : nregs;
 	
-	for (int i = 0; i < nregs; ++i)
+	for (int i = 0; i < regs_to_p; ++i)
 	{
 		rcLayerRegion& root = regs[i];
 		// Skip already visited.
@@ -375,7 +382,7 @@ bool rcBuildHeightfieldLayers(rcContext* ctx, rcCompactHeightfield& chf,
 	// Merge non-overlapping regions that are close in height.
 	const unsigned short mergeHeight = (unsigned short)walkableHeight * 4;
 	
-	for (int i = 0; i < nregs; ++i)
+	for (int i = 0; i < regs_to_p; ++i)
 	{
 		rcLayerRegion& ri = regs[i];
 		if (!ri.base) continue;
@@ -580,7 +587,7 @@ bool rcBuildHeightfieldLayers(rcContext* ctx, rcCompactHeightfield& chf,
 				{
 					const rcCompactSpan& s = chf.spans[j];
 					// Skip unassigned regions.
-					if (srcReg[j] == 0xff)
+					if (srcReg[j] == RI_MAX)
 						continue;
 					// Skip of does nto belong to current layer.
 					unsigned char lid = regs[srcReg[j]].layerId;
@@ -608,7 +615,7 @@ bool rcBuildHeightfieldLayers(rcContext* ctx, rcCompactHeightfield& chf,
 							const int ax = cx + rcGetDirOffsetX(dir);
 							const int ay = cy + rcGetDirOffsetY(dir);
 							const int ai = (int)chf.cells[ax+ay*w].index + rcGetCon(s, dir);
-							unsigned char alid = srcReg[ai] != 0xff ? regs[srcReg[ai]].layerId : 0xff;
+							unsigned char alid = srcReg[ai] != RI_MAX ? regs[srcReg[ai]].layerId : 0xff;
 							// Portal mask
 							if (chf.areas[ai] != RC_NULL_AREA && lid != alid)
 							{

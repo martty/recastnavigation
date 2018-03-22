@@ -21,6 +21,7 @@
 
 #include "DetourAlloc.h"
 #include "DetourStatus.h"
+#include <cstdint>
 
 static const int DT_TILECACHE_MAGIC = 'D'<<24 | 'T'<<16 | 'L'<<8 | 'R'; ///< 'DTLR';
 static const int DT_TILECACHE_VERSION = 1;
@@ -40,6 +41,7 @@ struct dtTileCacheLayerHeader
 	unsigned char minx, maxx, miny, maxy;	///< Usable sub-region.
 };
 
+using RegionIdType = uint16_t;
 struct dtTileCacheLayer
 {
 	dtTileCacheLayerHeader* header;
@@ -47,14 +49,14 @@ struct dtTileCacheLayer
 	unsigned char* heights;
 	unsigned char* areas;
 	unsigned char* cons;
-	unsigned char* regs;
+	RegionIdType* regs;
 };
 
 struct dtTileCacheContour
 {
 	int nverts;
 	unsigned char* verts;
-	unsigned char reg;
+	RegionIdType reg;
 	unsigned char area;
 };
 
