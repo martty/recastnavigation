@@ -569,6 +569,16 @@ dtStatus dtTileCache::update(const float /*dt*/, dtNavMesh* navmesh,
 						ob->pending[ob->npending++] = ob->touched[j];
 					}
 				}
+				if (ob->ntouched == 0) {
+					ob->state = DT_OBSTACLE_EMPTY;
+					// Update salt, salt should never be zero.
+					ob->salt = (ob->salt + 1) & ((1 << 16) - 1);
+					if (ob->salt == 0)
+						ob->salt++;
+					// Return obstacle to free list.
+					ob->next = m_nextFreeObstacle;
+					m_nextFreeObstacle = ob;
+				}
 			}
 		}
 		
@@ -817,4 +827,11 @@ void dtTileCache::getObstacleBounds(const struct dtTileCacheObstacle* ob, float*
 		bmin[2] = orientedBox.center[2] - maxr;
 		bmax[2] = orientedBox.center[2] + maxr;
 	}
+}
+
+dtStatus dtTileCache::requestBuildTile(const dtCompressedTileRef ref) {
+	if (m_nreqs >= MAX_REQUESTS)
+		return DT_FAILURE | DT_BUFFER_TOO_SMALL;
+	m_update[m_nupdate++] = ref;
+	return DT_SUCCESS;
 }

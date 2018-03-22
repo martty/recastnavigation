@@ -152,6 +152,8 @@ public:
 	
 	dtStatus queryTiles(const float* bmin, const float* bmax,
 						dtCompressedTileRef* results, int* resultCount, const int maxResults) const;
+
+	dtStatus requestBuildTile(const dtCompressedTileRef ref);
 	
 	/// Updates the tile cache by rebuilding tiles touched by unfinished obstacle requests.
 	///  @param[in]		dt			The time step size. Currently not used.
