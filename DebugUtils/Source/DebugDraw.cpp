@@ -292,7 +292,7 @@ void duAppendBox(struct duDebugDraw* dd, float minx, float miny, float minz,
 		maxx, maxy, maxz,
 		minx, maxy, maxz,
 	};
-	static const unsigned char inds[6*4] =
+	static const unsigned short inds[6*4] =
 	{
 		7, 6, 5, 4,
 		0, 1, 2, 3,
@@ -302,7 +302,7 @@ void duAppendBox(struct duDebugDraw* dd, float minx, float miny, float minz,
 		0, 4, 5, 1,
 	};
 	
-	const unsigned char* in = inds;
+	const unsigned short* in = inds;
 	for (int i = 0; i < 6; ++i)
 	{
 		dd->vertex(&verts[*in*3], fcol[i]); in++;
