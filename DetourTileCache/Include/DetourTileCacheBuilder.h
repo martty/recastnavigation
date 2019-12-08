@@ -24,7 +24,7 @@
 #include <cstdint>
 
 static const int DT_TILECACHE_MAGIC = 'D'<<24 | 'T'<<16 | 'L'<<8 | 'R'; ///< 'DTLR';
-static const int DT_TILECACHE_VERSION = 1;
+static const int DT_TILECACHE_VERSION = 2;
 
 static const unsigned char DT_TILECACHE_NULL_AREA = 0;
 static const unsigned char DT_TILECACHE_WALKABLE_AREA = 63;
@@ -41,7 +41,7 @@ struct dtTileCacheLayerHeader
 	unsigned char minx, maxx, miny, maxy;	///< Usable sub-region.
 };
 
-using RegionIdType = uint16_t;
+using RegionIdType = unsigned char;
 struct dtTileCacheLayer
 {
 	dtTileCacheLayerHeader* header;
@@ -55,7 +55,7 @@ struct dtTileCacheLayer
 struct dtTileCacheContour
 {
 	int nverts;
-	unsigned char* verts;
+	unsigned int* verts;
 	RegionIdType reg;
 	unsigned char area;
 };
@@ -135,6 +135,10 @@ dtStatus dtMarkBoxArea(dtTileCacheLayer& layer, const float* orig, const float c
 dtStatus dtMarkBoxArea(dtTileCacheLayer& layer, const float* orig, const float cs, const float ch,
 					   const float* center, const float* halfExtents, const float* rotAux, const unsigned char areaId);
 
+
+dtStatus dtMarkInvertedBoxArea(dtTileCacheLayer& layer, const float* orig, const float cs, const float ch,
+					   const float* center, const float* halfExtents, const float* rotAux, const unsigned char areaId);
+
 dtStatus dtBuildTileCacheRegions(dtTileCacheAlloc* alloc,
 								 dtTileCacheLayer& layer,
 								 const int walkableClimb);
@@ -144,9 +148,17 @@ dtStatus dtBuildTileCacheContours(dtTileCacheAlloc* alloc,
 								  const int walkableClimb, 	const float maxError,
 								  dtTileCacheContourSet& lcset);
 
+dtStatus dtSimplifyTileCacheContours(dtTileCacheAlloc* alloc,
+	dtTileCacheContourSet& lcset,
+	dtTileCacheLayer& layer,
+	const float walkableClimb,
+	const float maxError);
+
 dtStatus dtBuildTileCachePolyMesh(dtTileCacheAlloc* alloc,
 								  dtTileCacheContourSet& lcset,
 								  dtTileCachePolyMesh& mesh);
+
+dtStatus removeVertex(dtTileCachePolyMesh& mesh, const unsigned short rem, const int maxTris);
 
 /// Swaps the endianess of the compressed tile data's header (#dtTileCacheLayerHeader).
 /// Tile layer data does not need endian swapping as it consits only of bytes.

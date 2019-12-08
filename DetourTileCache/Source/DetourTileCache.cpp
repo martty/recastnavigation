@@ -8,6 +8,7 @@
 #include "DetourAssert.h"
 #include <string.h>
 #include <new>
+#include "../../DebugUtils/Include/DetourDebugDraw.h"
 
 dtTileCache* dtAllocTileCache()
 {
@@ -722,6 +723,28 @@ dtStatus dtTileCache::buildNavMeshTile(const dtCompressedTileRef ref, dtNavMesh*
 	if (dtStatusFailed(status))
 		return status;
 	
+	if (m_tmproc)
+	{
+		m_tmproc->cont(this, bc.lcset, &tile->header->bmin[0], m_params.cs, m_params.ch);
+	}
+	/*
+	for (auto n = 0; n < bc.lcset->nconts; n++) {
+		auto& cont = bc.lcset->conts[n];
+		for (auto i = 0; i < cont.nverts; i++) {
+			int x = cont.verts[i * 4];
+			auto& y = cont.verts[i * 4 + 1];
+			auto& z = cont.verts[i * 4 + 2];
+			float wx = tile->header->bmin[0] + x * m_params.cs;
+			wx *= 20;
+			//x = (wx - tile->header->bmin[0]) / m_params.cs;
+			x = (x < (tile->header->minx + tile->header->maxx)/2) ? tile->header->minx : tile->header->maxx;
+			x = x < 0 ? 0 : x;
+			x = x > tile->header->width ? tile->header->width : x;
+			cont.verts[i * 4] = x;
+		}
+	}*/
+
+
 	bc.lmesh = dtAllocTileCachePolyMesh(m_talloc);
 	if (!bc.lmesh)
 		return DT_FAILURE | DT_OUT_OF_MEMORY;

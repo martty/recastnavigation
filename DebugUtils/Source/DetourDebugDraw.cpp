@@ -666,8 +666,8 @@ void duDebugDrawTileCacheContours(duDebugDraw* dd, const struct dtTileCacheConto
 		for (int j = 0; j < c.nverts; ++j)
 		{
 			const int k = (j+1) % c.nverts;
-			const unsigned char* va = &c.verts[j*4];
-			const unsigned char* vb = &c.verts[k*4];
+			const auto* va = &c.verts[j*4];
+			const auto* vb = &c.verts[k*4];
 			const float ax = orig[0] + va[0]*cs;
 			const float ay = orig[1] + (va[1]+1+(i&1))*ch;
 			const float az = orig[2] + va[2]*cs;
@@ -685,15 +685,15 @@ void duDebugDrawTileCacheContours(duDebugDraw* dd, const struct dtTileCacheConto
 				const float cy = (ay+by)*0.5f;
 				const float cz = (az+bz)*0.5f;
 				
-				const float dx = cx + offs[d*2+0]*2*cs;
+				const float dx = cx + offs[d*2+0]*2*cs*10;
 				const float dy = cy;
-				const float dz = cz + offs[d*2+1]*2*cs;
+				const float dz = cz + offs[d*2+1]*2*cs*10;
 				
 				dd->vertex(cx,cy,cz,duRGBA(255,0,0,255));
 				dd->vertex(dx,dy,dz,duRGBA(255,0,0,255));
 			}
 			
-			duAppendArrow(dd, ax,ay,az, bx,by,bz, 0.0f, cs*0.5f, col);
+			duAppendArrow(dd, ax,ay,az, bx,by,bz, 0.0f, 10.f*cs*0.5f, col);
 		}
 	}
 	dd->end();
@@ -707,7 +707,7 @@ void duDebugDrawTileCacheContours(duDebugDraw* dd, const struct dtTileCacheConto
 		
 		for (int j = 0; j < c.nverts; ++j)
 		{
-			const unsigned char* va = &c.verts[j*4];
+			const auto* va = &c.verts[j*4];
 			
 			color = duDarkenCol(duIntToCol(i, a));
 			if (va[3] & 0x80)

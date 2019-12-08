@@ -85,8 +85,8 @@ struct dtTileCacheObstacle
 struct dtTileCacheParams
 {
 	float orig[3];
-	float cs, ch;
-	int width, height;
+	float cs, ch; // cell size x, z
+	int width, height; // how many cells in x, y
 	float walkableHeight;
 	float walkableRadius;
 	float walkableClimb;
@@ -101,12 +101,17 @@ struct dtTileCacheMeshProcess
 
 	virtual void process(struct dtNavMeshCreateParams* params,
 						 unsigned char* polyAreas, unsigned short* polyFlags) = 0;
+
+
+	virtual void cont(class dtTileCache* tc, struct dtTileCacheContourSet* lcset, float* bmin, float cs, float ch) = 0;
 };
 
 
 class dtTileCache
 {
 public:
+	struct duDebugDraw* dd;
+
 	dtTileCache();
 	~dtTileCache();
 	

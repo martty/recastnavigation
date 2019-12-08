@@ -328,7 +328,7 @@ int dtNavMesh::findConnectingPolys(const float* va, const float* vb,
 			const float bpos = getSlabCoord(vc, side);
 			
 			// Segments are not close enough.
-			if (dtAbs(apos-bpos) > 0.01f)
+			if (dtAbs(apos-bpos) > 0.1f)
 				continue;
 			
 			// Check if the segments touch.

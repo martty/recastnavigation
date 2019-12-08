@@ -780,7 +780,7 @@ dtStatus dtBuildTileCacheContours(dtTileCacheAlloc* alloc,
 				continue;
 			
 			dtTileCacheContour& cont = lcset.conts[ri];
-			
+			//cont.verts = nullptr;
 			if (cont.nverts > 0)
 				continue;
 			
@@ -793,20 +793,20 @@ dtStatus dtBuildTileCacheContours(dtTileCacheAlloc* alloc,
 				// Note: If you hit here ofte, try increasing 'maxTempVerts'.
 				return DT_FAILURE | DT_BUFFER_TOO_SMALL;
 			}
-			
-			simplifyContour(temp, maxError);
+			if(temp.nverts > 0)
+				simplifyContour(temp, maxError);
 			
 			// Store contour.
 			cont.nverts = temp.nverts;
 			if (cont.nverts > 0)
 			{
-				cont.verts = (unsigned char*)alloc->alloc(sizeof(unsigned char)*4*temp.nverts);
+				cont.verts = (unsigned int*)alloc->alloc(sizeof(unsigned int)*4*temp.nverts);
 				if (!cont.verts)
 					return DT_FAILURE | DT_OUT_OF_MEMORY;
 				
 				for (int i = 0, j = temp.nverts-1; i < temp.nverts; j=i++)
 				{
-					unsigned char* dst = &cont.verts[j*4];
+					auto* dst = &cont.verts[j*4];
 					unsigned char* v = &temp.verts[j*4];
 					unsigned char* vn = &temp.verts[i*4];
 					unsigned char nei = vn[3]; // The neighbour reg is stored at segment vertex of a segment. 
@@ -830,7 +830,75 @@ dtStatus dtBuildTileCacheContours(dtTileCacheAlloc* alloc,
 	}
 	
 	return DT_SUCCESS;
+}
+
+dtStatus dtSimplifyTileCacheContours(dtTileCacheAlloc* alloc,
+								  dtTileCacheContourSet& lcset,
+								  dtTileCacheLayer& layer,
+								  const float walkableClimb,
+								  const float maxError)
+{
+	dtAssert(alloc);
+
+	for (int i = 0; i < lcset.nconts; i++) {
+		auto& cont = lcset.conts[i];
+
+		// Allocate temp buffer for contour tracing.
+		const int maxTempVerts = cont.nverts; // Twice around the layer.
+
+		dtFixedArray<unsigned char> tempVerts(alloc, maxTempVerts * 4);
+		if (!tempVerts)
+			return DT_FAILURE | DT_OUT_OF_MEMORY;
+
+		dtFixedArray<unsigned short> tempPoly(alloc, maxTempVerts);
+		if (!tempPoly)
+			return DT_FAILURE | DT_OUT_OF_MEMORY;
+
+		for (int i = 0; i < cont.nverts; i++) {
+			tempVerts[i] = cont.verts[i];
+		}
+
+		dtTempContour temp(tempVerts, maxTempVerts, tempPoly, maxTempVerts);
+
+		temp.nverts = cont.nverts;
+		simplifyContour(temp, maxError);
+
+		// Store contour.
+		cont.nverts = temp.nverts;
+		if (cont.nverts > 0)
+		{
+			cont.verts = (unsigned int*)alloc->alloc(sizeof(unsigned int) * 4 * temp.nverts);
+			if (!cont.verts)
+				return DT_FAILURE | DT_OUT_OF_MEMORY;
+
+			for (int i = 0, j = temp.nverts - 1; i < temp.nverts; j = i++)
+			{
+				auto* dst = &cont.verts[j * 4];
+				unsigned char* v = &temp.verts[j * 4];
+				unsigned char* vn = &temp.verts[i * 4];
+				unsigned char nei = vn[3]; // The neighbour reg is stored at segment vertex of a segment. 
+				bool shouldRemove = false;
+				unsigned char lh = getCornerHeight(layer, (int)v[0], (int)v[1], (int)v[2],
+					walkableClimb, shouldRemove);
+
+				dst[0] = v[0];
+				dst[1] = lh;
+				dst[2] = v[2];
+
+				// Store portal direction and remove status to the fourth component.
+				dst[3] = 0x0f;
+				if (nei != 0xff && nei >= 0xf8)
+					dst[3] = nei - 0xf8;
+				if (shouldRemove)
+					dst[3] |= 0x80;
+			}
+		}
+	}
+
+	return DT_SUCCESS;
 }	
+
+
 
 
 
@@ -976,8 +1044,8 @@ static bool buildMeshAdjacency(dtTileCacheAlloc* alloc,
 		
 		for (int j = 0, k = cont.nverts-1; j < cont.nverts; k=j++)
 		{
-			const unsigned char* va = &cont.verts[k*4];
-			const unsigned char* vb = &cont.verts[j*4];
+			const auto* va = &cont.verts[k*4];
+			const auto* vb = &cont.verts[j*4];
 			const unsigned char dir = va[3] & 0xf;
 			if (dir == 0xf)
 				continue;
@@ -1074,7 +1142,7 @@ static bool buildMeshAdjacency(dtTileCacheAlloc* alloc,
 inline int prev(int i, int n) { return i-1 >= 0 ? i-1 : n-1; }
 inline int next(int i, int n) { return i+1 < n ? i+1 : 0; }
 
-inline int area2(const unsigned char* a, const unsigned char* b, const unsigned char* c)
+inline int area2(const unsigned int* a, const unsigned int* b, const unsigned int* c)
 {
 	return ((int)b[0] - (int)a[0]) * ((int)c[2] - (int)a[2]) - ((int)c[0] - (int)a[0]) * ((int)b[2] - (int)a[2]);
 }
@@ -1090,17 +1158,17 @@ inline bool xorb(bool x, bool y)
 
 // Returns true iff c is strictly to the left of the directed
 // line through a to b.
-inline bool left(const unsigned char* a, const unsigned char* b, const unsigned char* c)
+inline bool left(const unsigned int* a, const unsigned int* b, const unsigned int* c)
 {
 	return area2(a, b, c) < 0;
 }
 
-inline bool leftOn(const unsigned char* a, const unsigned char* b, const unsigned char* c)
+inline bool leftOn(const unsigned int* a, const unsigned int* b, const unsigned int* c)
 {
 	return area2(a, b, c) <= 0;
 }
 
-inline bool collinear(const unsigned char* a, const unsigned char* b, const unsigned char* c)
+inline bool collinear(const unsigned int* a, const unsigned int* b, const unsigned int* c)
 {
 	return area2(a, b, c) == 0;
 }
@@ -1108,8 +1176,8 @@ inline bool collinear(const unsigned char* a, const unsigned char* b, const unsi
 //	Returns true iff ab properly intersects cd: they share
 //	a point interior to both segments.  The properness of the
 //	intersection is ensured by using strict leftness.
-static bool intersectProp(const unsigned char* a, const unsigned char* b,
-						  const unsigned char* c, const unsigned char* d)
+static bool intersectProp(const unsigned int* a, const unsigned int* b,
+						  const unsigned int* c, const unsigned int* d)
 {
 	// Eliminate improper cases.
 	if (collinear(a,b,c) || collinear(a,b,d) ||
@@ -1121,7 +1189,7 @@ static bool intersectProp(const unsigned char* a, const unsigned char* b,
 
 // Returns T iff (a,b,c) are collinear and point c lies 
 // on the closed segement ab.
-static bool between(const unsigned char* a, const unsigned char* b, const unsigned char* c)
+static bool between(const unsigned int* a, const unsigned int* b, const unsigned int* c)
 {
 	if (!collinear(a, b, c))
 		return false;
@@ -1133,8 +1201,8 @@ static bool between(const unsigned char* a, const unsigned char* b, const unsign
 }
 
 // Returns true iff segments ab and cd intersect, properly or improperly.
-static bool intersect(const unsigned char* a, const unsigned char* b,
-					  const unsigned char* c, const unsigned char* d)
+static bool intersect(const unsigned int* a, const unsigned int* b,
+					  const unsigned int* c, const unsigned int* d)
 {
 	if (intersectProp(a, b, c, d))
 		return true;
@@ -1145,17 +1213,17 @@ static bool intersect(const unsigned char* a, const unsigned char* b,
 		return false;
 }
 
-static bool vequal(const unsigned char* a, const unsigned char* b)
+static bool vequal(const unsigned int* a, const unsigned int* b)
 {
 	return a[0] == b[0] && a[2] == b[2];
 }
 
 // Returns T iff (v_i, v_j) is a proper internal *or* external
 // diagonal of P, *ignoring edges incident to v_i and v_j*.
-static bool diagonalie(int i, int j, int n, const unsigned char* verts, const unsigned short* indices)
+static bool diagonalie(int i, int j, int n, const unsigned int* verts, const unsigned short* indices)
 {
-	const unsigned char* d0 = &verts[(indices[i] & 0x7fff) * 4];
-	const unsigned char* d1 = &verts[(indices[j] & 0x7fff) * 4];
+	const auto* d0 = &verts[(indices[i] & 0x7fff) * 4];
+	const auto* d1 = &verts[(indices[j] & 0x7fff) * 4];
 	
 	// For each edge (k,k+1) of P
 	for (int k = 0; k < n; k++)
@@ -1164,8 +1232,8 @@ static bool diagonalie(int i, int j, int n, const unsigned char* verts, const un
 		// Skip edges incident to i or j
 		if (!((k == i) || (k1 == i) || (k == j) || (k1 == j)))
 		{
-			const unsigned char* p0 = &verts[(indices[k] & 0x7fff) * 4];
-			const unsigned char* p1 = &verts[(indices[k1] & 0x7fff) * 4];
+			const auto* p0 = &verts[(indices[k] & 0x7fff) * 4];
+			const auto* p1 = &verts[(indices[k1] & 0x7fff) * 4];
 			
 			if (vequal(d0, p0) || vequal(d1, p0) || vequal(d0, p1) || vequal(d1, p1))
 				continue;
@@ -1179,12 +1247,12 @@ static bool diagonalie(int i, int j, int n, const unsigned char* verts, const un
 
 // Returns true iff the diagonal (i,j) is strictly internal to the 
 // polygon P in the neighborhood of the i endpoint.
-static bool	inCone(int i, int j, int n, const unsigned char* verts, const unsigned short* indices)
+static bool	inCone(int i, int j, int n, const unsigned int* verts, const unsigned short* indices)
 {
-	const unsigned char* pi = &verts[(indices[i] & 0x7fff) * 4];
-	const unsigned char* pj = &verts[(indices[j] & 0x7fff) * 4];
-	const unsigned char* pi1 = &verts[(indices[next(i, n)] & 0x7fff) * 4];
-	const unsigned char* pin1 = &verts[(indices[prev(i, n)] & 0x7fff) * 4];
+	const auto* pi = &verts[(indices[i] & 0x7fff) * 4];
+	const auto* pj = &verts[(indices[j] & 0x7fff) * 4];
+	const auto* pi1 = &verts[(indices[next(i, n)] & 0x7fff) * 4];
+	const auto* pin1 = &verts[(indices[prev(i, n)] & 0x7fff) * 4];
 	
 	// If P[i] is a convex vertex [ i+1 left or on (i-1,i) ].
 	if (leftOn(pin1, pi, pi1))
@@ -1196,12 +1264,65 @@ static bool	inCone(int i, int j, int n, const unsigned char* verts, const unsign
 
 // Returns T iff (v_i, v_j) is a proper internal
 // diagonal of P.
-static bool diagonal(int i, int j, int n, const unsigned char* verts, const unsigned short* indices)
+static bool diagonal(int i, int j, int n, const unsigned int* verts, const unsigned short* indices)
 {
 	return inCone(i, j, n, verts, indices) && diagonalie(i, j, n, verts, indices);
 }
 
-static int triangulate(int n, const unsigned char* verts, unsigned short* indices, unsigned short* tris)
+
+static bool diagonalieLoose(int i, int j, int n, const unsigned int* verts, unsigned short* indices)
+{
+	const auto* d0 = &verts[(indices[i] & 0x0fffffff) * 4];
+	const auto* d1 = &verts[(indices[j] & 0x0fffffff) * 4];
+	
+	// For each edge (k,k+1) of P
+	for (int k = 0; k < n; k++)
+	{
+		int k1 = next(k, n);
+		// Skip edges incident to i or j
+		if (!((k == i) || (k1 == i) || (k == j) || (k1 == j)))
+		{
+			const auto* p0 = &verts[(indices[k] & 0x0fffffff) * 4];
+			const auto* p1 = &verts[(indices[k1] & 0x0fffffff) * 4];
+			
+			if (vequal(d0, p0) || vequal(d1, p0) || vequal(d0, p1) || vequal(d1, p1))
+				continue;
+			
+			if (intersectProp(d0, d1, p0, p1))
+				return false;
+		}
+	}
+	return true;
+}
+
+static bool	inConeLoose(int i, int j, int n, const unsigned int* verts, unsigned short* indices)
+{
+	const auto* pi = &verts[(indices[i] & 0x0fffffff) * 4];
+	const auto* pj = &verts[(indices[j] & 0x0fffffff) * 4];
+	const auto* pi1 = &verts[(indices[next(i, n)] & 0x0fffffff) * 4];
+	const auto* pin1 = &verts[(indices[prev(i, n)] & 0x0fffffff) * 4];
+	
+	// If P[i] is a convex vertex [ i+1 left or on (i-1,i) ].
+	if (leftOn(pin1, pi, pi1))
+		return leftOn(pi, pj, pin1) && leftOn(pj, pi, pi1);
+	// Assume (i-1,i,i+1) not collinear.
+	// else P[i] is reflex.
+	return !(leftOn(pi, pj, pi1) && leftOn(pj, pi, pin1));
+}
+
+static bool diagonalLoose(int i, int j, int n, const unsigned int* verts, unsigned short* indices)
+{
+	return inConeLoose(i, j, n, verts, indices) && diagonalieLoose(i, j, n, verts, indices);
+}
+
+inline int area2(const int* a, const int* b, const int* c)
+{
+	return (b[0] - a[0]) * (c[2] - a[2]) - (c[0] - a[0]) * (b[2] - a[2]);
+}
+
+#include <cstdio>
+
+static int triangulate(int n, const unsigned int* verts, unsigned short* indices, unsigned short* tris)
 {
 	int ntris = 0;
 	unsigned short* dst = tris;
@@ -1224,8 +1345,8 @@ static int triangulate(int n, const unsigned char* verts, unsigned short* indice
 			int i1 = next(i, n);
 			if (indices[i1] & 0x8000)
 			{
-				const unsigned char* p0 = &verts[(indices[i] & 0x7fff) * 4];
-				const unsigned char* p2 = &verts[(indices[next(i1, n)] & 0x7fff) * 4];
+				const auto* p0 = &verts[(indices[i] & 0x7fff) * 4];
+				const auto* p2 = &verts[(indices[next(i1, n)] & 0x7fff) * 4];
 				
 				const int dx = (int)p2[0] - (int)p0[0];
 				const int dz = (int)p2[2] - (int)p0[2];
@@ -1240,13 +1361,33 @@ static int triangulate(int n, const unsigned char* verts, unsigned short* indice
 		
 		if (mini == -1)
 		{
-			// Should not happen.
-			/*			printf("mini == -1 ntris=%d n=%d\n", ntris, n);
-			 for (int i = 0; i < n; i++)
-			 {
-			 printf("%d ", indices[i] & 0x0fffffff);
-			 }
-			 printf("\n");*/
+			minLen = -1;
+			mini = -1;
+			for (int i = 0; i < n; i++)
+			{
+				int i1 = next(i, n);
+				int i2 = next(i1, n);
+				if (diagonalLoose(i, i2, n, verts, indices))
+				{
+					const auto* p0 = &verts[(indices[i] & 0x0fffffff) * 4];
+					const auto* p2 = &verts[(indices[next(i2, n)] & 0x0fffffff) * 4];
+					int dx = p2[0] - p0[0];
+					int dy = p2[2] - p0[2];
+					int len = dx*dx + dy*dy;
+					
+					if (minLen < 0 || len < minLen)
+					{
+						minLen = len;
+						mini = i;
+					}
+				}
+			}
+			if (mini == -1)
+			{
+				// The contour is messed up. This sometimes happens
+				// if the contour simplification is too aggressive.
+				return -ntris;
+			}
 			return -ntris;
 		}
 		
@@ -1499,7 +1640,7 @@ static bool canRemoveVertex(dtTileCachePolyMesh& mesh, const unsigned short rem)
 	return true;
 }
 
-static dtStatus removeVertex(dtTileCachePolyMesh& mesh, const unsigned short rem, const int maxTris)
+dtStatus removeVertex(dtTileCachePolyMesh& mesh, const unsigned short rem, const int maxTris)
 {
 	// Count number of polygons to remove.
 	int numRemovedVerts = 0;
@@ -1631,16 +1772,16 @@ static dtStatus removeVertex(dtTileCachePolyMesh& mesh, const unsigned short rem
 	
 	
 	unsigned short tris[MAX_REM_EDGES*3];
-	unsigned char tverts[MAX_REM_EDGES*3];
+	unsigned int tverts[MAX_REM_EDGES*3];
 	unsigned short tpoly[MAX_REM_EDGES*3];
 	
 	// Generate temp vertex array for triangulation.
 	for (int i = 0; i < nhole; ++i)
 	{
 		const unsigned short pi = hole[i];
-		tverts[i*4+0] = (unsigned char)mesh.verts[pi*3+0];
-		tverts[i*4+1] = (unsigned char)mesh.verts[pi*3+1];
-		tverts[i*4+2] = (unsigned char)mesh.verts[pi*3+2];
+		tverts[i*4+0] = (unsigned int)mesh.verts[pi*3+0];
+		tverts[i*4+1] = (unsigned int)mesh.verts[pi*3+1];
+		tverts[i*4+2] = (unsigned int)mesh.verts[pi*3+2];
 		tverts[i*4+3] = 0;
 		tpoly[i] = (unsigned short)i;
 	}
@@ -1754,7 +1895,8 @@ dtStatus dtBuildTileCachePolyMesh(dtTileCacheAlloc* alloc,
 	for (int i = 0; i < lcset.nconts; ++i)
 	{
 		// Skip null contours.
-		if (lcset.conts[i].nverts < 3) continue;
+		if (lcset.conts[i].nverts < 3)
+			continue;
 		maxVertices += lcset.conts[i].nverts;
 		maxTris += lcset.conts[i].nverts - 2;
 		maxVertsPerCont = dtMax(maxVertsPerCont, lcset.conts[i].nverts);
@@ -1838,7 +1980,7 @@ dtStatus dtBuildTileCachePolyMesh(dtTileCacheAlloc* alloc,
 		// Add and merge vertices.
 		for (int j = 0; j < cont.nverts; ++j)
 		{
-			const unsigned char* v = &cont.verts[j*4];
+			const auto* v = &cont.verts[j*4];
 			indices[j] = addVertex((unsigned short)v[0], (unsigned short)v[1], (unsigned short)v[2],
 								   mesh.verts, firstVert, nextVert, mesh.nverts);
 			if (v[3] & 0x80)
@@ -2091,6 +2233,60 @@ dtStatus dtMarkBoxArea(dtTileCacheLayer& layer, const float* orig, const float c
 				continue;
 			const int y = layer.heights[x+z*w];
 			if (y < miny || y > maxy)
+				continue;
+			layer.areas[x+z*w] = areaId;
+		}
+	}
+
+	return DT_SUCCESS;
+}
+
+dtStatus dtMarkInvertedBoxArea(dtTileCacheLayer& layer, const float* orig, const float cs, const float ch,
+					   const float* center, const float* halfExtents, const float* rotAux, const unsigned char areaId)
+{
+	const int w = (int)layer.header->width;
+	const int h = (int)layer.header->height;
+	const float ics = 1.0f/cs;
+	const float ich = 1.0f/ch;
+
+	float cx = (center[0] - orig[0])*ics;
+	float cz = (center[2] - orig[2])*ics;
+	
+	float maxr = 1.41f*dtMax(halfExtents[0], halfExtents[2]);
+	int minx = (int)floorf(cx - maxr*ics);
+	int maxx = (int)floorf(cx + maxr*ics);
+	int minz = (int)floorf(cz - maxr*ics);
+	int maxz = (int)floorf(cz + maxr*ics);
+	int miny = (int)floorf((center[1]-halfExtents[1]-orig[1])*ich);
+	int maxy = (int)floorf((center[1]+halfExtents[1]-orig[1])*ich);
+
+	if (maxx < 0) return DT_SUCCESS;
+	if (minx >= w) return DT_SUCCESS;
+	if (maxz < 0) return DT_SUCCESS;
+	if (minz >= h) return DT_SUCCESS;
+
+	if (minx < 0) minx = 0;
+	if (maxx >= w) maxx = w-1;
+	if (minz < 0) minz = 0;
+	if (maxz >= h) maxz = h-1;
+	
+	float xhalf = halfExtents[0]*ics + 0.5f;
+	float zhalf = halfExtents[2]*ics + 0.5f;
+
+	for (int z = minz; z <= maxz; ++z)
+	{
+		for (int x = minx; x <= maxx; ++x)
+		{			
+			float x2 = 2.0f*(float(x) - cx);
+			float z2 = 2.0f*(float(z) - cz);
+			float xrot = rotAux[1]*x2 + rotAux[0]*z2;
+			if (!(xrot > xhalf || xrot < -xhalf))
+				continue;
+			float zrot = rotAux[1]*z2 - rotAux[0]*x2;
+			if (!(zrot > zhalf || zrot < -zhalf))
+				continue;
+			const int y = layer.heights[x+z*w];
+			if (!(y < miny || y > maxy))
 				continue;
 			layer.areas[x+z*w] = areaId;
 		}
